@@ -13,16 +13,5 @@ DEFAULT_ANNUAL_RATES = AnnualRatesConfig(
 )
 
 
-# Super simple placeholder: in reality you'd hit a real BAH/MHA source.
-# For now we let the user type it, but we keep this helper in case
-# we later want logic by ZIP.
-def get_full_mha_for_zip(zip_code: str) -> float:
-    """
-    Return the full (100% GI Bill equivalent) MHA / BAH
-    for the provided ZIP code.
-
-    For now this is just a stub. You can customize it manually or
-    replace it later with a real lookup or API.
-    """
-    # TODO: hook this up to a real table.
-    return 0.0  # example default
+# BAH / MHA basis for Post-9/11 GI Bill: see `bah_rates_2026_data.py`
+# (2026 rates, E-5 with dependents) and location picker in `app.py`.

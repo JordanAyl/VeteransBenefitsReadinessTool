@@ -25,8 +25,8 @@ def estimate_monthly_housing(
     Estimate monthly housing allowance (MHA) for a given profile.
 
     full_mha_for_zip:
-        Full MHA for the school ZIP at 100% GI Bill equivalent
-        (e.g., E-5 w/ dependents BAH for that ZIP).
+        Full MHA at 100% GI Bill equivalent (monthly), e.g. E-5 with dependents
+        BAH for the school’s military housing area.
 
     Returns:
         Estimated monthly housing amount in USD.

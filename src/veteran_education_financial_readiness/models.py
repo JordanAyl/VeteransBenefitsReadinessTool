@@ -23,7 +23,7 @@ class BenefitProfile:
     for a single academic term.
     """
     gi_percentage: int           # e.g., 40, 50, 60, 70, 80, 90, 100
-    school_zip: str              # school location ZIP (used for MHA lookup or manual input) Hard Coded
+    school_zip: str              # MHA location code (e.g. CA038) for BAH lookup context
     school_type: SchoolType      # hard coded
     rate_of_pursuit: RateOfPursuit
     credits_this_term: int       # credit hours for the term
