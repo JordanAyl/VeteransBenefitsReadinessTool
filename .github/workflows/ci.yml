@@ -1,0 +1,36 @@
+# Validates install and that Python sources compile (quick signal for recruiters and CI).
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python package
+        run: python -m compileall -q src/veteran_education_financial_readiness
+
+      - name: Smoke import (package path)
+        working-directory: src/veteran_education_financial_readiness
+        run: python -c "import app; import calculations; import models; import config; import bah_rates_2026_data"

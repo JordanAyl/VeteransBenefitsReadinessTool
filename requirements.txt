@@ -1,6 +1,4 @@
-streamlit
-pandas
-altair
-pydantic
-streamlit-analytics2
-
+streamlit>=1.28,<2
+pandas>=2.0,<4
+altair>=5.0,<7
+pydantic>=2.0,<3

@@ -1,0 +1,17 @@
+# See https://docs.streamlit.io/develop/concepts/configuration/options
+[browser]
+gatherUsageStats = false
+
+[theme]
+# Default light theme; viewers can switch in Settings. Aligns with app styling.
+base = "light"
+primaryColor = "#1d4ed8"
+backgroundColor = "#f8fafc"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = true
+enableXsrfProtection = true

@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-import streamlit_analytics2
 
+from contextlib import nullcontext
 from datetime import date, timedelta
 from typing import Any, Dict, List, Tuple
 
-from models import BenefitProfile, AnnualRatesConfig, RateOfPursuit, SchoolType
+from models import BenefitProfile, RateOfPursuit, SchoolType
 from calculations import estimate_all_benefits_for_term
 from bah_rates_2026_data import (
     e05_rate_for_code,
@@ -54,6 +54,7 @@ def build_forecast(
     other_income_monthly: float,
     fixed_expenses_monthly: float,
     variable_expenses_monthly: float,
+    scheduled_one_time_expenses: List[Dict[str, Any]],
     term_configs: List[Dict[str, Any]],
 ):
     """
@@ -68,6 +69,7 @@ def build_forecast(
 
     data = []
     balance = starting_savings
+    one_time_expense_applied = set()
 
     for d in dates:
         # Find which terms are active this month
@@ -94,7 +96,36 @@ def build_forecast(
         income_other = other_income_monthly
         total_income = income_bah + income_disability + income_other
 
-        total_expenses = fixed_expenses_monthly + variable_expenses_monthly
+        scheduled_one_time_total = 0.0
+        for exp in scheduled_one_time_expenses:
+            if not exp.get("enabled", True):
+                continue
+
+            amount = float(exp.get("amount", 0.0) or 0.0)
+            if amount <= 0:
+                continue
+
+            month_due = int(exp.get("month", 1) or 1)
+            frequency = exp.get("frequency", "Annual")
+            unique_key = str(exp.get("id", "expense"))
+
+            apply_now = False
+            if frequency == "Annual":
+                apply_now = d.month == month_due
+            elif frequency == "Quarterly":
+                apply_now = (d.month - month_due) % 3 == 0
+            elif frequency == "Semiannual":
+                apply_now = (d.month - month_due) % 6 == 0
+            else:  # One-time
+                once_key = f"{unique_key}:{d.year}:{month_due}"
+                apply_now = d.year == start_date.year and d.month == month_due and once_key not in one_time_expense_applied
+                if apply_now:
+                    one_time_expense_applied.add(once_key)
+
+            if apply_now:
+                scheduled_one_time_total += amount
+
+        total_expenses = fixed_expenses_monthly + variable_expenses_monthly + scheduled_one_time_total
         net = total_income - total_expenses
         balance += net
 
@@ -109,6 +140,7 @@ def build_forecast(
                 "Total income": total_income,
                 "Fixed expenses": fixed_expenses_monthly,
                 "Variable expenses": variable_expenses_monthly,
+                "Scheduled one-time expenses": scheduled_one_time_total,
                 "Total expenses": total_expenses,
                 "Net cash": net,
                 "Projected balance": balance,
@@ -161,6 +193,13 @@ def _inject_custom_css() -> None:
         );
         border-right: 1px solid color-mix(in srgb, var(--st-text-color) 12%, transparent);
         box-shadow: inset 4px 0 0 0 var(--st-primary-color);
+    }
+    [data-testid="stSidebarCollapseButton"] {
+        display: none !important;
+    }
+    [data-testid="stSidebar"] {
+        min-width: 460px !important;
+        max-width: 460px !important;
     }
     [data-testid="stSidebar"] [data-testid="stMarkdown"] h1,
     [data-testid="stSidebar"] [data-testid="stMarkdown"] h2,
@@ -556,7 +595,7 @@ def main():
         initial_sidebar_state="expanded",
     )
     _inject_custom_css()
-    with streamlit_analytics2.track():
+    with nullcontext():
         st.markdown(
             """
 <div class="vefr-hero">
@@ -712,7 +751,6 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-
             with st.expander("📅 Forecast period", expanded=True):
                 forecast_start = st.date_input(
                     "Forecast start date",
@@ -726,8 +764,7 @@ def main():
                     max_value=max_end,
                     help="You can forecast up to one year from the start date.",
                 )
-
-            with st.expander("🎓 Term schedule (BAH by semester)", expanded=False):
+            with st.expander("🎓 Term schedule (BAH by semester)", expanded=True):
                 st.caption(
                     "Turn on each term you attend. Enrollment intensity adjusts the housing multiplier."
                 )
@@ -759,7 +796,6 @@ def main():
                     default_length_days=90,
                     key_prefix="fall",
                 )
-
             with st.expander("💰 Savings & GI Bill", expanded=True):
                 starting_savings = st.number_input(
                     "Current savings ($)",
@@ -841,20 +877,183 @@ def main():
                     step=100.0,
                     value=0.0,
                 )
-
             with st.expander("📆 Monthly expenses", expanded=True):
-                fixed_expenses_monthly = st.number_input(
-                    "Fixed expenses (rent, utilities, insurance, etc.) ($)",
-                    min_value=0.0,
-                    step=100.0,
-                    value=0.0,
+                month_options = [
+                    (1, "January"),
+                    (2, "February"),
+                    (3, "March"),
+                    (4, "April"),
+                    (5, "May"),
+                    (6, "June"),
+                    (7, "July"),
+                    (8, "August"),
+                    (9, "September"),
+                    (10, "October"),
+                    (11, "November"),
+                    (12, "December"),
+                ]
+                month_by_label = {name: num for num, name in month_options}
+
+                if "vefr_recurring_expenses" not in st.session_state:
+                    st.session_state.vefr_recurring_expenses = []
+                if "vefr_one_time_expenses" not in st.session_state:
+                    st.session_state.vefr_one_time_expenses = []
+
+                st.caption("Itemize recurring expenses and scheduled one-time payments.")
+
+                st.markdown("**Recurring monthly expenses**")
+                st.caption("Line 1: Name, Amount, Remove. Line 2: Type.")
+                recurring_to_remove = []
+                fixed_expenses_monthly = 0.0
+                variable_expenses_monthly = 0.0
+
+                for i, item in enumerate(st.session_state.vefr_recurring_expenses):
+                    c1, c2, c3 = st.columns([2.0, 2.1, 0.6])
+                    with c1:
+                        name = st.text_input(
+                            "Name",
+                            value=item.get("name", ""),
+                            key=f"re_name_{item['id']}",
+                            label_visibility="collapsed",
+                            placeholder="Expense name",
+                        )
+                    with c2:
+                        amount = st.number_input(
+                            "Amount",
+                            min_value=0.0,
+                            step=50.0,
+                            value=float(item.get("amount", 0.0)),
+                            key=f"re_amt_{item['id']}",
+                            label_visibility="collapsed",
+                        )
+                    with c3:
+                        if st.button("❌", key=f"re_rm_{item['id']}", help="Remove row"):
+                            recurring_to_remove.append(i)
+
+                    c4, c5 = st.columns([2.1, 2.7])
+                    with c4:
+                        kind = st.selectbox(
+                            "Type",
+                            options=["Fixed", "Variable"],
+                            index=0 if item.get("kind", "Fixed") == "Fixed" else 1,
+                            key=f"re_kind_{item['id']}",
+                        )
+                    with c5:
+                        st.write("")
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+                    item.update({"name": name, "amount": amount, "kind": kind, "enabled": True})
+                    if kind == "Fixed":
+                        fixed_expenses_monthly += amount
+                    else:
+                        variable_expenses_monthly += amount
+
+                if st.button("+ Add recurring expense"):
+                    st.session_state.vefr_recurring_expenses.append(
+                        {
+                            "id": f"re_{len(st.session_state.vefr_recurring_expenses) + 1}_{len(st.session_state.vefr_one_time_expenses)}",
+                            "name": "",
+                            "amount": 0.0,
+                            "kind": "Variable",
+                            "enabled": True,
+                        }
+                    )
+                    st.rerun()
+
+                for idx in sorted(recurring_to_remove, reverse=True):
+                    st.session_state.vefr_recurring_expenses.pop(idx)
+                if recurring_to_remove:
+                    st.rerun()
+
+                st.caption(
+                    f"Recurring totals — Fixed: ${fixed_expenses_monthly:,.0f} | Variable: ${variable_expenses_monthly:,.0f}"
                 )
-                variable_expenses_monthly = st.number_input(
-                    "Variable expenses (food, gas, misc.) ($)",
-                    min_value=0.0,
-                    step=100.0,
-                    value=0.0,
-                )
+                st.divider()
+
+                st.markdown("**Scheduled one-time expenses**")
+                st.caption("Line 1: Name, Amount, Remove. Line 2: Frequency and Month.")
+                one_time_to_remove = []
+                scheduled_one_time_expenses = []
+                for i, item in enumerate(st.session_state.vefr_one_time_expenses):
+                    c1, c2, c3 = st.columns([1.6, 1.8, 0.6])
+                    with c1:
+                        name = st.text_input(
+                            "Label",
+                            value=item.get("name", ""),
+                            key=f"ot_name_{item['id']}",
+                            label_visibility="collapsed",
+                            placeholder="One-time expense",
+                        )
+                    with c2:
+                        amount = st.number_input(
+                            "Amount",
+                            min_value=0.0,
+                            step=50.0,
+                            value=float(item.get("amount", 0.0)),
+                            key=f"ot_amt_{item['id']}",
+                            label_visibility="collapsed",
+                        )
+                    with c3:
+                        if st.button("❌", key=f"ot_rm_{item['id']}", help="Remove row"):
+                            one_time_to_remove.append(i)
+
+                    c5, c6 = st.columns([1.6, 2.0])
+                    with c5:
+                        frequency = st.selectbox(
+                            "Frequency",
+                            options=["One-time", "Annual", "Semiannual", "Quarterly"],
+                            index=["One-time", "Annual", "Semiannual", "Quarterly"].index(
+                                item.get("frequency", "Annual")
+                            ),
+                            key=f"ot_freq_{item['id']}",
+                        )
+                    with c6:
+                        month_label = st.selectbox(
+                            "Month",
+                            options=[m[1] for m in month_options],
+                            index=max(0, min(11, int(item.get("month", forecast_start.month)) - 1)),
+                            key=f"ot_month_{item['id']}",
+                        )
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+                    month_num = month_by_label[month_label]
+                    item.update(
+                        {
+                            "name": name,
+                            "amount": amount,
+                            "frequency": frequency,
+                            "month": month_num,
+                            "enabled": True,
+                        }
+                    )
+                    scheduled_one_time_expenses.append(
+                        {
+                            "id": item["id"],
+                            "name": name,
+                            "amount": amount,
+                            "frequency": frequency,
+                            "month": month_num,
+                            "enabled": True,
+                        }
+                    )
+
+                if st.button("+ Add one-time expense"):
+                    st.session_state.vefr_one_time_expenses.append(
+                        {
+                            "id": f"ot_{len(st.session_state.vefr_one_time_expenses) + 1}_{len(st.session_state.vefr_recurring_expenses)}",
+                            "name": "",
+                            "amount": 0.0,
+                            "frequency": "Annual",
+                            "month": forecast_start.month,
+                            "enabled": True,
+                        }
+                    )
+                    st.rerun()
+
+                for idx in sorted(one_time_to_remove, reverse=True):
+                    st.session_state.vefr_one_time_expenses.pop(idx)
+                if one_time_to_remove:
+                    st.rerun()
 
         # Build forecast
         df = build_forecast(
@@ -866,6 +1065,7 @@ def main():
             other_income_monthly=other_income_monthly,
             fixed_expenses_monthly=fixed_expenses_monthly,
             variable_expenses_monthly=variable_expenses_monthly,
+            scheduled_one_time_expenses=scheduled_one_time_expenses,
             term_configs=term_configs,
         )
 
@@ -1040,6 +1240,10 @@ def main():
                     f"- **MHA / housing:** `{bah_location_label}` → **${full_mha_for_zip:,.0f}/mo** at 100%; "
                     f"then scaled by GI % and term enrollment intensity."
                 )
+                st.markdown(
+                    f"- **Scheduled one-time expenses enabled:** `{len(scheduled_one_time_expenses)}` item(s), "
+                    f"applied by each item's frequency/month."
+                )
                 st.markdown(f"- Projections are estimates only and may differ from actual VA payments.")
 
         # ===== MONTHLY TABLE TAB =====
@@ -1064,6 +1268,7 @@ def main():
                             "Total income": "${:,.0f}",
                             "Fixed expenses": "${:,.0f}",
                             "Variable expenses": "${:,.0f}",
+                            "Scheduled one-time expenses": "${:,.0f}",
                             "Total expenses": "${:,.0f}",
                             "Net cash": "${:,.0f}",
                             "Projected balance": "${:,.0f}",
@@ -1090,6 +1295,7 @@ def main():
                         st.write(f"**Expenses total:** ${row['Total expenses']:,.0f}")
                         st.write(f"- Fixed: ${row['Fixed expenses']:,.0f}")
                         st.write(f"- Variable: ${row['Variable expenses']:,.0f}")
+                        st.write(f"- Scheduled one-time: ${row['Scheduled one-time expenses']:,.0f}")
 
                         st.write(f"**Net cashflow:** ${row['Net cash']:,.0f}")
 
