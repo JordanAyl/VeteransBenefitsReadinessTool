@@ -80,7 +80,7 @@ VeteransBenefitsReadinessTool/
 **Prerequisites:** Python 3.10+ (3.12+ recommended; use the `py` launcher on Windows if `python` is not on PATH).
 
 ```powershell
-git clone https://github.com/JordanAyl/VeteransBenefitsReadinessTool.git
+git clone https://github.com/JordanAyl/veteran-benefits-forecaster.git
 cd VeteransBenefitsReadinessTool
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1          # Windows PowerShell
